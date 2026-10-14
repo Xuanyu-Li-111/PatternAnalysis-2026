@@ -1,102 +1,39 @@
 import os
-import re
-import random
 
-from PIL import Image
+import nibabel as nib
+import numpy as np
 
 import torch
-from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
-
-import torchvision.transforms.functional as TF
-from torchvision.transforms import InterpolationMode
+from torch.utils.data import Dataset, DataLoader
 
 
-def get_patient_id(file_name):
-    match = re.search(
-        r"case[_-]?(\d+)",
-        file_name,
-        re.IGNORECASE
-    )
-
-    if match is None:
-        raise ValueError(
-            f"Cannot find patient ID in file name: {file_name}"
-        )
-
-    return match.group(1)
+NUM_CLASSES = 6
 
 
-def get_mask_name(image_name):
-    if image_name.startswith("case_"):
-        return image_name.replace(
-            "case_",
-            "seg_",
-            1
-        )
+class HipMRIDataset(Dataset):
 
-    return image_name
-
-
-def find_data_folders(data_root):
-    image_folders = [
-        os.path.join(
-            data_root,
-            "keras_png_slices_train"
-        ),
-        os.path.join(
-            data_root,
-            "keras_png_slices_validate"
-        ),
-        os.path.join(
-            data_root,
-            "keras_png_slices_test"
-        )
-    ]
-
-    mask_folders = [
-        os.path.join(
-            data_root,
-            "keras_png_slices_seg_train"
-        ),
-        os.path.join(
-            data_root,
-            "keras_png_slices_seg_validate"
-        ),
-        os.path.join(
-            data_root,
-            "keras_png_slices_seg_test"
-        )
-    ]
-
-    return image_folders, mask_folders
-
-
-def collect_pairs(
-    image_folders,
-    mask_folders
-):
-    pairs = []
-
-    for image_folder, mask_folder in zip(
-        image_folders,
-        mask_folders
+    def __init__(
+        self,
+        image_folder,
+        mask_folder
     ):
-        if not os.path.isdir(image_folder):
-            continue
+        self.image_folder = image_folder
+        self.mask_folder = mask_folder
 
-        if not os.path.isdir(mask_folder):
-            continue
-
-        image_names = sorted([
-            name
-            for name in os.listdir(image_folder)
-            if name.lower().endswith(".png")
+        self.image_files = sorted([
+            file
+            for file in os.listdir(image_folder)
+            if file.endswith(".nii.gz")
         ])
 
-        for image_name in image_names:
-            mask_name = get_mask_name(
-                image_name
+        self.samples = []
+
+        for image_name in self.image_files:
+
+            mask_name = image_name.replace(
+                "case_",
+                "seg_",
+                1
             )
 
             image_path = os.path.join(
@@ -110,218 +47,117 @@ def collect_pairs(
             )
 
             if not os.path.exists(mask_path):
-                print(
-                    "Missing mask:",
-                    mask_path
+                raise FileNotFoundError(
+                    f"Missing mask for {image_name}"
                 )
-                continue
 
-            pairs.append({
-                "image": image_path,
-                "mask": mask_path,
-                "patient": get_patient_id(
+            self.samples.append(
+                (
+                    image_path,
+                    mask_path,
                     image_name
                 )
-            })
+            )
 
-    if len(pairs) == 0:
-        raise RuntimeError(
-            "No MRI-mask pairs were found."
-        )
-
-    return pairs
-
-
-def split_by_patient(
-    pairs,
-    train_ratio=0.70,
-    val_ratio=0.15,
-    seed=42
-):
-    patients = sorted(
-        set(
-            pair["patient"]
-            for pair in pairs
-        )
-    )
-
-    random_generator = random.Random(seed)
-
-    random_generator.shuffle(
-        patients
-    )
-
-    total_patients = len(patients)
-
-    train_end = int(
-        total_patients
-        * train_ratio
-    )
-
-    val_end = train_end + int(
-        total_patients
-        * val_ratio
-    )
-
-    train_patients = set(
-        patients[:train_end]
-    )
-
-    val_patients = set(
-        patients[train_end:val_end]
-    )
-
-    test_patients = set(
-        patients[val_end:]
-    )
-
-    train_pairs = [
-        pair
-        for pair in pairs
-        if pair["patient"] in train_patients
-    ]
-
-    val_pairs = [
-        pair
-        for pair in pairs
-        if pair["patient"] in val_patients
-    ]
-
-    test_pairs = [
-        pair
-        for pair in pairs
-        if pair["patient"] in test_patients
-    ]
-
-    assert train_patients.isdisjoint(
-        val_patients
-    )
-
-    assert train_patients.isdisjoint(
-        test_patients
-    )
-
-    assert val_patients.isdisjoint(
-        test_patients
-    )
-
-    print(
-        "Patients:",
-        len(patients)
-    )
-
-    print(
-        "Train patients:",
-        len(train_patients)
-    )
-
-    print(
-        "Validation patients:",
-        len(val_patients)
-    )
-
-    print(
-        "Test patients:",
-        len(test_patients)
-    )
-
-    return (
-        train_pairs,
-        val_pairs,
-        test_pairs
-    )
-
-
-class OASISDataset(Dataset):
-    def __init__(
-        self,
-        pairs,
-        image_size=128
-    ):
-        self.pairs = pairs
-        self.image_size = image_size
 
     def __len__(self):
-        return len(self.pairs)
+        return len(self.samples)
+
 
     def __getitem__(self, index):
-        pair = self.pairs[index]
 
-        image = Image.open(
-            pair["image"]
-        ).convert("L")
+        (
+            image_path,
+            mask_path,
+            image_name
+        ) = self.samples[index]
 
-        mask = Image.open(
-            pair["mask"]
-        ).convert("L")
-
-        image = TF.resize(
-            image,
-            [self.image_size, self.image_size],
-            interpolation=InterpolationMode.BILINEAR
+        image = nib.load(
+            image_path
+        ).get_fdata(
+            caching="unchanged"
         )
 
-        # Nearest-neighbour resize avoids creating new mask labels.
-        mask = TF.resize(
-            mask,
-            [self.image_size, self.image_size],
-            interpolation=InterpolationMode.NEAREST
+        mask = nib.load(
+            mask_path
+        ).get_fdata(
+            caching="unchanged"
         )
 
-        image = TF.to_tensor(
+        # Some NIfTI files may contain an extra dimension.
+        if image.ndim == 3:
+            image = image[:, :, 0]
+
+        if mask.ndim == 3:
+            mask = mask[:, :, 0]
+
+        image = image.astype(
+            np.float32
+        )
+
+        mask = mask.astype(
+            np.int64
+        )
+
+        # Z-score normalisation.
+        image = (
+            image - image.mean()
+        ) / (
+            image.std() + 1e-8
+        )
+
+        image = torch.from_numpy(
             image
+        ).unsqueeze(0)
+
+        mask = torch.from_numpy(
+            mask
         )
 
-        mask = TF.pil_to_tensor(
-            mask
-        ).squeeze(0)
-
-        # Original labels are 0, 85, 170 and 255.
-        mask = (
-            mask // 85
-        ).long()
-
-        return image, mask
+        return (
+            image,
+            mask,
+            image_name
+        )
 
 
 def create_dataloaders(
     data_root,
-    image_size=128,
-    batch_size=16,
-    num_workers=0,
-    seed=42
+    batch_size=8,
+    num_workers=0
 ):
-    image_folders, mask_folders = find_data_folders(
-        data_root
+
+    train_dataset = HipMRIDataset(
+        os.path.join(
+            data_root,
+            "keras_slices_train"
+        ),
+        os.path.join(
+            data_root,
+            "keras_slices_seg_train"
+        )
     )
 
-    pairs = collect_pairs(
-        image_folders,
-        mask_folders
+    validation_dataset = HipMRIDataset(
+        os.path.join(
+            data_root,
+            "keras_slices_validate"
+        ),
+        os.path.join(
+            data_root,
+            "keras_slices_seg_validate"
+        )
     )
 
-    (
-        train_pairs,
-        val_pairs,
-        test_pairs
-    ) = split_by_patient(
-        pairs,
-        seed=seed
-    )
-
-    train_dataset = OASISDataset(
-        train_pairs,
-        image_size
-    )
-
-    val_dataset = OASISDataset(
-        val_pairs,
-        image_size
-    )
-
-    test_dataset = OASISDataset(
-        test_pairs,
-        image_size
+    test_dataset = HipMRIDataset(
+        os.path.join(
+            data_root,
+            "keras_slices_test"
+        ),
+        os.path.join(
+            data_root,
+            "keras_slices_seg_test"
+        )
     )
 
     train_loader = DataLoader(
@@ -332,8 +168,8 @@ def create_dataloaders(
         pin_memory=torch.cuda.is_available()
     )
 
-    val_loader = DataLoader(
-        val_dataset,
+    validation_loader = DataLoader(
+        validation_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
@@ -348,41 +184,47 @@ def create_dataloaders(
         pin_memory=torch.cuda.is_available()
     )
 
-    print(
-        "Train slices:",
-        len(train_dataset)
-    )
-
-    print(
-        "Validation slices:",
-        len(val_dataset)
-    )
-
-    print(
-        "Test slices:",
-        len(test_dataset)
-    )
-
     return (
         train_loader,
-        val_loader,
+        validation_loader,
         test_loader
     )
 
 
 if __name__ == "__main__":
-    data_root = r"C:\Users\XUANYU LI\PycharmProjects\PythonProject7\keras_png_slices_data"
+
+    DATA_ROOT = (
+        "/home/groups/comp3710/"
+        "HipMRI_Study_open/"
+        "keras_slices_data"
+    )
 
     (
         train_loader,
-        val_loader,
+        validation_loader,
         test_loader
     ) = create_dataloaders(
-        data_root,
-        batch_size=8
+        DATA_ROOT,
+        batch_size=8,
+        num_workers=0
     )
 
-    images, masks = next(
+    print(
+        "Train slices:",
+        len(train_loader.dataset)
+    )
+
+    print(
+        "Validation slices:",
+        len(validation_loader.dataset)
+    )
+
+    print(
+        "Test slices:",
+        len(test_loader.dataset)
+    )
+
+    images, masks, names = next(
         iter(train_loader)
     )
 
@@ -399,4 +241,19 @@ if __name__ == "__main__":
     print(
         "Mask labels:",
         torch.unique(masks)
+    )
+
+    print(
+        "Image mean:",
+        images.mean().item()
+    )
+
+    print(
+        "Image std:",
+        images.std().item()
+    )
+
+    print(
+        "Example file:",
+        names[0]
     )
