@@ -36,7 +36,7 @@ class BasicUNet(nn.Module):
     def __init__(
         self,
         in_channels=1,
-        num_classes=4,
+        num_classes=6,
         base_channels=32
     ):
         super().__init__()
@@ -221,7 +221,7 @@ class ImprovedUNet(nn.Module):
     def __init__(
         self,
         in_channels=1,
-        num_classes=4,
+        num_classes=6,
         base_channels=32
     ):
         super().__init__()
