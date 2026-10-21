@@ -4,17 +4,17 @@
 
 This project investigates 2D semantic segmentation of pelvic MRI slices from the HipMRI dataset using a standard U-Net baseline and an Improved U-Net.
 
-The main objective is to determine whether the additional architectural complexity of the Improved U-Net provides a meaningful segmentation benefit over a standard U-Net, particularly for small and difficult anatomical structures such as the prostate.
+The main objective is to determine whether the additional architectural complexity of the Improved U-Net provides a meaningful segmentation benefit over a standard U-Net, particularly for small and difficult anatomical structures.
 
 The project follows the COMP3710 Normal Difficulty segmentation pathway:
 
 - Dataset: HipMRI 2D MRI slices
 - Proposed model: Improved U-Net
 - Baseline: Standard 2D U-Net
-- Target metric: prostate Dice score of at least 0.75 on the held-out test set
-- Evaluation: Dice, IoU, qualitative error analysis, computational cost, and paired baseline comparison
+- Evaluation metrics: Dice score, Intersection over Union (IoU), qualitative error analysis, computational cost, and paired model comparison
+- Computational platform: UQ Rangpur HPC cluster using NVIDIA A100 GPUs
 
-The HipMRI prostate segmentation task is difficult because the prostate occupies a very small proportion of the pelvic MRI and has low-contrast boundaries near surrounding structures. These properties create severe class imbalance and make boundary accuracy important even when the global segmentation score appears high.
+The HipMRI segmentation task is challenging because some target structures occupy only a small proportion of each pelvic MRI slice and may have low-contrast boundaries. This creates substantial class imbalance and means that strong global segmentation scores can still hide difficult local failures.
 
 ---
 
@@ -26,7 +26,58 @@ The main engineering question investigated in this project is:
 
 A second concern is whether a high global Dice score hides difficult local failures.
 
-In prostate radiotherapy planning, segmentation errors near the prostate boundary may be more important than errors in large and easy regions. Therefore, this project evaluates not only aggregate Dice and IoU scores, but also individual difficult slices and paired model behaviour.
+Therefore, this project evaluates not only aggregate Dice and IoU scores, but also:
+
+- class-level performance,
+- difficult individual slices,
+- paired baseline-versus-improved behaviour,
+- model parameter count,
+- inference time,
+- peak GPU memory usage.
+
+---
+
+## Repository Structure
+
+The main project files are:
+
+```text
+dataset.py
+modules.py
+train.py
+predict.py
+compare_models.py
+README.md
+```
+
+Generated experiment outputs include:
+
+```text
+training_loss.png
+validation_dice.png
+prediction_example.png
+
+paired_better_1.png
+paired_better_2.png
+paired_better_3.png
+paired_better_4.png
+paired_better_5.png
+
+paired_worse_1.png
+paired_worse_2.png
+paired_worse_3.png
+paired_worse_4.png
+paired_worse_5.png
+```
+
+Model checkpoints generated during training are:
+
+```text
+best_baseline_unet.pth
+best_improved_unet.pth
+```
+
+The checkpoint files are large binary files and are not intended to be committed to the Git repository.
 
 ---
 
@@ -40,7 +91,7 @@ Rangpur dataset location:
 /home/groups/comp3710/HipMRI_Study_open/keras_slices_data
 ```
 
-The 2D dataset contains six folders:
+The dataset contains six folders:
 
 ```text
 keras_slices_train
@@ -58,29 +109,21 @@ MRI files use names such as:
 case_004_week_0_slice_0.nii.gz
 ```
 
-The corresponding segmentation file uses:
+The corresponding segmentation mask uses:
 
 ```text
 seg_004_week_0_slice_0.nii.gz
 ```
 
-Therefore, MRI and segmentation files are paired by replacing the `case_` prefix with `seg_`.
+MRI and segmentation files are paired by replacing the `case_` prefix with `seg_`.
 
-All files use the NIfTI format (`.nii.gz`) and are loaded using `nibabel`.
+All files use NIfTI format (`.nii.gz`) and are loaded using `nibabel`.
 
 ---
 
 ## Dataset Inspection
 
-A direct inspection of the Rangpur data showed:
-
-```text
-MRI shape:          (256, 128)
-Segmentation shape: (256, 128)
-Observed MRI range: 0.0 to 411.0
-```
-
-The segmentation masks contain six integer labels:
+Direct inspection of the Rangpur dataset showed that the segmentation masks contain six integer labels:
 
 ```text
 [0, 1, 2, 3, 4, 5]
@@ -92,7 +135,7 @@ The training segmentation set contains:
 11,460 masks
 ```
 
-A full scan of the training masks produced the following class statistics:
+A complete scan of the training masks produced the following class statistics:
 
 | Label | Total Pixels | Slices Containing Label |
 |---|---:|---:|
@@ -103,17 +146,11 @@ A full scan of the training masks produced the following class statistics:
 | 4 | 1,340,454 | 4,056 |
 | 5 | 1,599,295 | 4,152 |
 
-These statistics demonstrate substantial class imbalance. Labels 4 and 5 are particularly small compared with the dominant regions.
+These statistics demonstrate substantial class imbalance.
 
-The exact organ-to-label mapping was not explicitly provided in the files inspected on Rangpur. For this reason, the project does not assign anatomical names to numeric labels until the mapping is verified from an authoritative source.
+Labels 4 and 5 are particularly small relative to the dominant classes and therefore represent more difficult segmentation targets.
 
-TODO before final submission:
-
-```text
-Confirm which numeric label corresponds to the prostate.
-```
-
-This verified class ID will then be used when reporting the required prostate Dice score.
+The exact anatomical organ-to-label mapping was not explicitly provided in the dataset files or metadata inspected on Rangpur. For this reason, this report uses numeric class IDs rather than assigning potentially incorrect anatomical names.
 
 ---
 
@@ -121,7 +158,7 @@ This verified class ID will then be used when reporting the required prostate Di
 
 The supplied HipMRI split was explicitly checked for patient leakage.
 
-The patient IDs were extracted from file names.
+Patient IDs were extracted from the file names.
 
 The resulting split was:
 
@@ -141,22 +178,22 @@ The following intersections were checked:
 ```text
 Train / Validation overlap: set()
 Train / Test overlap:       set()
-Validation / Test overlap: set()
+Validation / Test overlap:  set()
 ```
 
-Therefore, there is no patient overlap between training, validation, and test sets.
+Therefore, there is no patient overlap between the training, validation, and test sets.
 
-This is important because different slices and treatment weeks from the same patient are strongly correlated. A slice-level random split could therefore produce artificially high test performance.
+This is important because multiple slices and treatment weeks from the same patient are strongly correlated. A random slice-level split could otherwise produce artificially optimistic test performance.
 
 ---
 
 ## Example Label Visualisation
 
-A representative HipMRI slice was visualised together with the individual segmentation labels.
+A representative HipMRI slice was visualised together with its segmentation labels.
 
 ![HipMRI label visualisation](hipmri_label_map.png)
 
-The visualisation confirms that the task is multi-class semantic segmentation and also illustrates the strong imbalance between large anatomical regions and small structures.
+The visualisation confirms that the task is multi-class semantic segmentation and also illustrates the strong imbalance between large anatomical regions and smaller structures.
 
 ---
 
@@ -164,27 +201,62 @@ The visualisation confirms that the task is multi-class semantic segmentation an
 
 MRI slices are loaded using `nibabel` and converted to `float32`.
 
-The original spatial size is retained:
-
-```text
-256 × 128
-```
-
-The images are not downsampled to `128 × 128` because the prostate and other small anatomical structures occupy relatively few pixels. Retaining the original 2D resolution avoids unnecessary loss of spatial information.
-
-MRI intensity normalisation is performed using z-score normalisation:
-
-```python
-image = (image - image.mean()) / (image.std() + 1e-8)
-```
-
-Segmentation masks are converted to integer class IDs:
+Segmentation masks are converted to integer class IDs using:
 
 ```python
 mask = mask.astype(np.int64)
 ```
 
-The model input and target shapes are:
+The HipMRI slices do not all have exactly the same spatial dimensions.
+
+For example, some slices have shape:
+
+```text
+256 × 128
+```
+
+while others may have different widths such as:
+
+```text
+256 × 144
+```
+
+To allow multiple samples to be stacked into the same batch, all MRI slices and segmentation masks are standardised to:
+
+```text
+256 × 128
+```
+
+MRI images are resized using bilinear interpolation:
+
+```python
+image = F.interpolate(
+    image.unsqueeze(0),
+    size=(256, 128),
+    mode="bilinear",
+    align_corners=False
+).squeeze(0)
+```
+
+Segmentation masks are resized using nearest-neighbour interpolation:
+
+```python
+mask = F.interpolate(
+    mask.unsqueeze(0).unsqueeze(0).float(),
+    size=(256, 128),
+    mode="nearest"
+).squeeze(0).squeeze(0).long()
+```
+
+Nearest-neighbour interpolation is used for segmentation masks because interpolation methods such as bilinear interpolation could introduce invalid intermediate class values.
+
+MRI intensity normalisation is performed independently for each slice using z-score normalisation:
+
+```python
+image = (image - image.mean()) / (image.std() + 1e-8)
+```
+
+The resulting tensor shapes are:
 
 ```text
 Image:
@@ -192,12 +264,8 @@ Image:
 
 Mask:
 [256, 128]
-```
 
-For a batch of size `B`:
-
-```text
-Input:
+Batch input:
 [B, 1, 256, 128]
 
 Model output:
@@ -217,7 +285,7 @@ The baseline is a standard 2D U-Net.
 
 The encoder progressively extracts higher-level features while reducing spatial resolution.
 
-The decoder restores spatial resolution using transposed convolution and skip connections.
+The decoder restores spatial resolution using transposed convolutions and skip connections.
 
 The main channel progression is:
 
@@ -231,7 +299,7 @@ The main channel progression is:
 
 The U-Net uses skip connections between matching encoder and decoder stages.
 
-The final layer is a `1 × 1` convolution that converts the final feature map into six class logits:
+The final layer is a `1 × 1` convolution that converts the final feature representation into six class logits:
 
 ```text
 output channels = 6
@@ -239,17 +307,21 @@ output channels = 6
 
 No softmax operation is applied inside the model because `CrossEntropyLoss` expects raw logits.
 
+The final baseline model contains:
+
+```text
+7,762,630 trainable parameters
+```
+
 ---
 
 ## Improved U-Net
 
 The proposed model is an Improved U-Net.
 
-It retains the U-Net encoder-decoder structure but introduces additional architectural components designed to improve feature learning.
+It retains the overall U-Net encoder-decoder architecture while introducing additional residual processing and regularisation.
 
-The current implementation adds residual processing to the convolutional blocks and includes regularisation through dropout.
-
-Residual connections allow the network to learn a residual mapping:
+Residual connections allow the network to learn:
 
 ```text
 output = F(x) + x
@@ -257,715 +329,645 @@ output = F(x) + x
 
 This can improve optimisation by allowing information and gradients to flow more directly through the network.
 
-The main hypothesis is that the Improved U-Net may provide better representation of difficult anatomical regions, but at the cost of:
+Dropout is also used to provide additional regularisation.
 
-- more trainable parameters;
-- higher training time;
-- higher inference latency;
-- potentially greater memory use.
+The Improved U-Net contains:
 
-The engineering comparison therefore evaluates whether the accuracy improvement is large enough to justify this extra complexity.
+```text
+8,113,766 trainable parameters
+```
+
+This is approximately 4.5% more parameters than the baseline.
 
 ---
 
 ## Loss Function
 
-The training objective combines pixel-wise classification with region-overlap optimisation.
+Training uses a combination of categorical cross-entropy and Dice loss.
 
-### Cross-Entropy Loss
+Cross-entropy provides pixel-wise classification supervision, while Dice loss directly encourages segmentation overlap.
 
-Cross entropy treats segmentation as per-pixel multi-class classification.
-
-```python
-cross_entropy = nn.CrossEntropyLoss()
-```
-
-It penalises incorrect class predictions at each pixel.
-
-### Dice Loss
-
-Dice loss directly measures overlap between predicted and ground-truth regions.
-
-The Sørensen-Dice coefficient for a class is:
+The total loss is conceptually:
 
 ```text
-Dice = 2 × |Prediction ∩ Ground Truth|
-       --------------------------------
-       |Prediction| + |Ground Truth|
+Total Loss = Cross Entropy Loss + Dice Loss
 ```
 
-A Dice score of:
+For multi-class segmentation, target masks are converted to one-hot representations when computing Dice loss.
+
+The model itself outputs raw logits with shape:
 
 ```text
-1.0
+[B, 6, 256, 128]
 ```
-
-represents perfect overlap.
-
-The combined loss allows the model to learn both class-level correctness and region-level overlap.
 
 ---
 
 ## Evaluation Metrics
 
-The following metrics are reported on the held-out test set.
-
 ### Dice Score
 
-Dice measures segmentation overlap and is the main metric used in this project.
-
-Per-class Dice is reported for all six labels.
-
-The final report also separately identifies the verified prostate label and reports:
+For a predicted region P and ground-truth region G:
 
 ```text
-Prostate Dice
+Dice = 2 |P ∩ G| / (|P| + |G|)
 ```
 
-The Normal Difficulty target is:
-
-```text
-Prostate Dice ≥ 0.75
-```
+A Dice score of `1.0` indicates perfect overlap.
 
 ### Intersection over Union
 
-IoU is calculated as:
-
 ```text
-IoU = |Prediction ∩ Ground Truth|
-      ---------------------------
-      |Prediction ∪ Ground Truth|
+IoU = |P ∩ G| / |P ∪ G|
 ```
 
-Per-class IoU is reported together with Dice.
+IoU is stricter than Dice and provides another measure of segmentation overlap.
 
-### Computational Cost
+### Computational Metrics
 
-The following engineering costs are measured:
+The project also records:
 
-- trainable parameter count;
-- training time;
-- inference latency per image;
-- peak GPU VRAM when running on Rangpur.
+- number of trainable parameters,
+- inference time per image,
+- peak GPU memory usage.
 
-These measurements are used to determine whether the Improved U-Net provides a practical improvement over the baseline.
+These values are used to determine whether the Improved U-Net provides a meaningful performance gain relative to its additional computational cost.
 
 ---
 
-## Experimental Setup
+## Training Environment
 
-Both models are evaluated using the same:
+Training was performed on the UQ Rangpur HPC cluster.
 
-- training split;
-- validation split;
-- test split;
-- image resolution;
-- batch size;
-- optimiser;
-- learning rate;
-- loss function;
-- evaluation metrics.
-
-This ensures that the architecture is the main variable being compared.
-
-Current intended settings:
+GPU:
 
 ```text
-Input resolution: 256 × 128
-Number of classes: 6
-Optimizer: Adam
-Learning rate: 0.001
-Loss: Cross Entropy + Dice
+NVIDIA A100-PCIE-40GB
 ```
 
-TODO after final HipMRI training:
+PyTorch successfully detected CUDA and used the GPU for training.
+
+Both models were trained for:
 
 ```text
-Final batch size:
-Final epoch count:
-Rangpur GPU:
-Peak GPU VRAM:
+30 epochs
 ```
+
+with:
+
+```text
+Batch size: 8
+Workers:    2
+Input size: 256 × 128
+```
+
+The same dataset split and evaluation procedure were used for both models to ensure a fair comparison.
 
 ---
 
-## Training Procedure
+# Experimental Results
 
-For every batch:
+## Baseline U-Net Results
 
-```text
-MRI images
-    ↓
-forward pass
-    ↓
-six-channel segmentation logits
-    ↓
-Cross-Entropy + Dice loss
-    ↓
-backpropagation
-    ↓
-Adam update
-```
+The baseline U-Net was trained for 30 epochs.
 
-The model is evaluated on the validation set after every epoch.
+Final test performance:
 
-The checkpoint with the best validation Dice is saved.
-
-This is preferable to automatically using the last epoch because continued reduction in training loss does not guarantee improved validation performance.
-
----
-
-## Baseline Results
-
-TODO: replace this section with the final HipMRI baseline experiment.
-
-Expected table format:
-
-| Metric | Basic U-Net |
-|---|---:|
-| Test Loss | TODO |
-| Mean Dice | TODO |
-| Mean IoU | TODO |
-| Prostate Dice | TODO |
-| Prostate IoU | TODO |
-| Parameters | TODO |
-| Inference Time | TODO |
-| Peak GPU VRAM | TODO |
-
-Per-class results:
-
-| Label | Dice | IoU |
+| Class | Dice | IoU |
 |---|---:|---:|
-| 0 | TODO | TODO |
-| 1 | TODO | TODO |
-| 2 | TODO | TODO |
-| 3 | TODO | TODO |
-| 4 | TODO | TODO |
-| 5 | TODO | TODO |
+| 0 | 0.9970 | 0.9940 |
+| 1 | 0.9853 | 0.9710 |
+| 2 | 0.9390 | 0.8851 |
+| 3 | 0.9660 | 0.9343 |
+| 4 | 0.8493 | 0.7381 |
+| 5 | 0.8739 | 0.7760 |
+
+Summary:
+
+```text
+Test loss:               0.2984
+Mean test Dice:          0.9351
+Trainable parameters:    7,762,630
+Inference time / image:  0.744 ms
+Peak GPU memory:         822.41 MB
+```
+
+The large classes achieved very high segmentation accuracy.
+
+The two smallest classes, labels 4 and 5, remained substantially more difficult, which is consistent with the strong class imbalance observed during dataset inspection.
 
 ---
 
 ## Improved U-Net Results
 
-TODO: replace this section with the final HipMRI Improved U-Net experiment.
+The Improved U-Net was trained under the same experimental conditions for 30 epochs.
 
-| Metric | Improved U-Net |
-|---|---:|
-| Test Loss | TODO |
-| Mean Dice | TODO |
-| Mean IoU | TODO |
-| Prostate Dice | TODO |
-| Prostate IoU | TODO |
-| Parameters | TODO |
-| Inference Time | TODO |
-| Peak GPU VRAM | TODO |
+Final test performance:
 
-Per-class results:
-
-| Label | Dice | IoU |
+| Class | Dice | IoU |
 |---|---:|---:|
-| 0 | TODO | TODO |
-| 1 | TODO | TODO |
-| 2 | TODO | TODO |
-| 3 | TODO | TODO |
-| 4 | TODO | TODO |
-| 5 | TODO | TODO |
+| 0 | 0.9969 | 0.9938 |
+| 1 | 0.9850 | 0.9705 |
+| 2 | 0.9376 | 0.8825 |
+| 3 | 0.9656 | 0.9335 |
+| 4 | 0.8644 | 0.7612 |
+| 5 | 0.8699 | 0.7697 |
+
+Summary:
+
+```text
+Test loss:               0.3024
+Mean test Dice:          0.9366
+Trainable parameters:    8,113,766
+Inference time / image:  0.880 ms
+Peak GPU memory:         993.50 MB
+```
+
+The Improved U-Net achieved a slightly higher overall mean Dice than the baseline.
+
+The largest improvement occurred for class 4:
+
+```text
+Baseline Class 4 Dice: 0.8493
+Improved Class 4 Dice: 0.8644
+Difference:            +0.0151
+```
+
+However, class 5 decreased slightly:
+
+```text
+Baseline Class 5 Dice: 0.8739
+Improved Class 5 Dice: 0.8699
+Difference:            -0.0040
+```
+
+Therefore, the architectural modification did not improve every class uniformly.
 
 ---
 
-## Baseline versus Improved U-Net
+## Baseline vs Improved U-Net
 
-The final comparison will use the same held-out HipMRI test split.
+| Metric | Baseline U-Net | Improved U-Net | Difference |
+|---|---:|---:|---:|
+| Mean Test Dice | 0.9351 | **0.9366** | +0.0015 |
+| Class 4 Dice | 0.8493 | **0.8644** | +0.0151 |
+| Class 5 Dice | **0.8739** | 0.8699 | -0.0040 |
+| Parameters | 7,762,630 | 8,113,766 | +351,136 |
+| Inference Time | **0.744 ms** | 0.880 ms | +0.136 ms |
+| Peak GPU Memory | **822.41 MB** | 993.50 MB | +171.09 MB |
 
-TODO after final experiments:
+The Improved U-Net increased the overall mean test Dice from `0.9351` to `0.9366`.
 
-| Model | Mean Dice | Prostate Dice | Mean IoU | Parameters | Inference Time | Peak VRAM |
-|---|---:|---:|---:|---:|---:|---:|
-| Basic U-Net | TODO | TODO | TODO | TODO | TODO | TODO |
-| Improved U-Net | TODO | TODO | TODO | TODO | TODO | TODO |
+This represents an absolute improvement of `0.0015`, or approximately `0.15` percentage points.
 
-The important question is not simply whether the Improved U-Net achieves a numerically higher Dice score.
+The additional computational cost was approximately:
 
-The comparison must determine:
+```text
+Trainable parameters: +4.5%
+Inference time:       +18.3%
+Peak GPU memory:      +20.8%
+```
 
-> Is the improvement large and consistent enough to justify the additional computational cost?
+Therefore, the additional architectural complexity produced only a marginal aggregate segmentation improvement.
 
 ---
 
 ## Paired Slice-Level Comparison
 
-A paired comparison is performed by running both models on exactly the same test MRI slices.
+A paired comparison was performed on all 540 test slices using the same test split.
 
-For each slice:
-
-```text
-delta Dice =
-Improved U-Net foreground Dice
--
-Basic U-Net foreground Dice
-```
-
-This allows identification of:
+Results:
 
 ```text
-cases where the Improved U-Net helps most
+Test slices:              540
+Improved U-Net better:    222
+Improved U-Net worse:     318
+Approximately equal:      0
+
+Average foreground Dice difference:
+-0.000022
 ```
 
-and:
+Although the Improved U-Net achieved a slightly higher aggregate test Dice, the average slice-level foreground Dice difference was effectively zero.
+
+This indicates that the Improved U-Net does not consistently outperform the baseline on individual slices.
+
+Instead, the architectural modification appears to change which difficult cases are handled successfully.
+
+The aggregate test Dice and paired slice-level comparison use different averaging schemes. The aggregate metric weights class performance across the whole dataset, while the paired comparison first computes a score for each individual slice.
+
+Therefore, a model may have a slightly better aggregate score while still performing worse on a larger number of individual slices.
+
+---
+
+## Cases Where the Improved U-Net Performs Better
+
+### Better Case 1
 
 ```text
-cases where the Improved U-Net performs worse
+Baseline foreground Dice:  0.7461
+Improved foreground Dice:  0.9754
+Difference:                +0.2294
 ```
 
-This is useful because a small improvement in global average Dice may hide large improvements or degradations on individual difficult slices.
-
-TODO after HipMRI training:
+Per-class Dice:
 
 ```text
-Number of test slices:
-Improved better:
-Improved worse:
-Mean paired Dice difference:
-Largest positive difference:
-Largest negative difference:
+Baseline:
+[0.9970, 0.9910, 0.9216, 0.0000, 0.8177, 1.0000]
+
+Improved:
+[0.9974, 0.9936, 0.9156, 1.0000, 0.9679, 1.0000]
 ```
+
+![Improved better case 1](paired_better_1.png)
+
+### Better Case 2
+
+```text
+Baseline foreground Dice:  0.7492
+Improved foreground Dice:  0.9749
+Difference:                +0.2257
+```
+
+![Improved better case 2](paired_better_2.png)
+
+### Better Case 3
+
+```text
+Baseline foreground Dice:  0.7492
+Improved foreground Dice:  0.9739
+Difference:                +0.2247
+```
+
+![Improved better case 3](paired_better_3.png)
+
+### Better Case 4
+
+```text
+Baseline foreground Dice:  0.7465
+Improved foreground Dice:  0.9580
+Difference:                +0.2115
+```
+
+![Improved better case 4](paired_better_4.png)
+
+### Better Case 5
+
+```text
+Baseline foreground Dice:  0.7334
+Improved foreground Dice:  0.9380
+Difference:                +0.2046
+```
+
+![Improved better case 5](paired_better_5.png)
+
+These cases show that the Improved U-Net can substantially outperform the baseline on particular difficult slices.
+
+In several cases, a small class was completely missed by the baseline but successfully segmented by the Improved U-Net.
+
+---
+
+## Cases Where the Improved U-Net Performs Worse
+
+### Worse Case 1
+
+```text
+Baseline foreground Dice:  0.8944
+Improved foreground Dice:  0.6173
+Difference:                -0.2771
+```
+
+Per-class Dice:
+
+```text
+Baseline:
+[0.9961, 0.9798, 0.9517, 0.7039, 0.8365, 1.0000]
+
+Improved:
+[0.9942, 0.9765, 0.9537, 0.4595, 0.6966, 0.0000]
+```
+
+![Improved worse case 1](paired_worse_1.png)
+
+### Worse Case 2
+
+```text
+Baseline foreground Dice:  0.8729
+Improved foreground Dice:  0.6108
+Difference:                -0.2621
+```
+
+![Improved worse case 2](paired_worse_2.png)
+
+### Worse Case 3
+
+```text
+Baseline foreground Dice:  0.8989
+Improved foreground Dice:  0.6738
+Difference:                -0.2251
+```
+
+![Improved worse case 3](paired_worse_3.png)
+
+### Worse Case 4
+
+```text
+Baseline foreground Dice:  0.9544
+Improved foreground Dice:  0.7364
+Difference:                -0.2180
+```
+
+![Improved worse case 4](paired_worse_4.png)
+
+### Worse Case 5
+
+```text
+Baseline foreground Dice:  0.9506
+Improved foreground Dice:  0.7424
+Difference:                -0.2082
+```
+
+![Improved worse case 5](paired_worse_5.png)
+
+These examples demonstrate that a higher aggregate Dice score does not guarantee better segmentation on every individual slice.
+
+The strongest changes were often caused by small or sparsely represented classes.
+
+Because these structures contain relatively few pixels, a small absolute segmentation error can result in a large change in Dice score.
 
 ---
 
 ## Failure Case Analysis
 
-Global Dice alone is insufficient for evaluating prostate segmentation.
+The paired comparison revealed an important limitation of relying only on aggregate segmentation metrics.
 
-The most important failures are likely to occur in:
+For several difficult slices, one model obtained a per-class Dice score of `0.0`, while the other obtained `1.0` for the same class.
 
-- small prostate regions;
-- low-contrast boundaries;
-- prostate base slices;
-- prostate apex slices;
-- regions adjacent to the bladder or rectum;
-- slices where only a very small foreground structure is present.
+This produces a very large change in per-slice foreground Dice even though the aggregate dataset-level difference remains small.
 
-The final analysis will inspect at least 3–5 representative failure cases.
+The main failure patterns include:
 
-Each failure visualisation will contain:
+- missing small segmented regions,
+- reduced overlap for low-area classes,
+- inconsistent detection of sparsely occurring labels,
+- sensitivity to difficult boundaries.
 
-```text
-MRI
-Ground Truth
-Prediction
-Error Map
-```
-
-The error map highlights pixels where the predicted class differs from the ground-truth segmentation.
-
-TODO after final inference:
-
-### Failure Case 1
-
-```text
-Slice:
-Failure type:
-Prostate Dice:
-Observed error:
-Likely explanation:
-Operational implication:
-```
-
-### Failure Case 2
-
-```text
-Slice:
-Failure type:
-Prostate Dice:
-Observed error:
-Likely explanation:
-Operational implication:
-```
-
-### Failure Case 3
-
-```text
-Slice:
-Failure type:
-Prostate Dice:
-Observed error:
-Likely explanation:
-Operational implication:
-```
-
-The purpose of the analysis is to determine whether a high aggregate metric hides clinically important local errors.
+The results suggest that small structures are more sensitive to architectural changes than the large dominant regions.
 
 ---
 
-## Qualitative Results
+## Computational Trade-Off
 
-Example prediction format:
+The Improved U-Net provides slightly higher aggregate segmentation accuracy but requires more computational resources.
+
+Compared with the baseline:
 
 ```text
-MRI | Ground Truth | Prediction | Error Map
+Parameter increase:
+351,136 parameters
+≈ 4.5%
+
+Inference time increase:
+0.136 ms/image
+≈ 18.3%
+
+Peak GPU memory increase:
+171.09 MB
+≈ 20.8%
 ```
 
-TODO:
+However, the mean test Dice improves by only:
 
-```markdown
-![HipMRI prediction example](hipmri_prediction.png)
+```text
+0.0015
 ```
 
-Paired comparison examples:
-
-```markdown
-![Improved model better case](paired_better_1.png)
-
-![Improved model worse case](paired_worse_1.png)
-```
-
-These figures will be added after the final HipMRI models are trained.
+Therefore, the additional architectural complexity does not produce a proportionally large overall accuracy improvement.
 
 ---
 
-## Computational Cost
+## Discussion
 
-The project evaluates the accuracy-cost trade-off.
+The experiments show that both the baseline U-Net and Improved U-Net perform strongly on the HipMRI segmentation task.
 
-TODO after Rangpur profiling:
+The baseline already achieves:
 
-| Model | Parameters | Training Time | Inference / Image | Peak GPU VRAM |
-|---|---:|---:|---:|---:|
-| Basic U-Net | TODO | TODO | TODO | TODO |
-| Improved U-Net | TODO | TODO | TODO | TODO |
+```text
+Mean test Dice = 0.9351
+```
 
-GPU memory will be measured on Rangpur rather than estimated.
+The Improved U-Net increases this to:
 
-No synthetic or guessed GPU memory values are reported.
+```text
+Mean test Dice = 0.9366
+```
+
+The improvement is therefore very small at the aggregate level.
+
+However, the per-class and paired slice-level results provide a more nuanced picture.
+
+Class 4 improves from `0.8493` to `0.8644`, which is a more substantial class-specific improvement.
+
+At the same time, class 5 decreases slightly.
+
+The paired slice-level analysis also shows that the Improved U-Net performs better on only 222 of 540 test slices and worse on 318 slices.
+
+The average foreground Dice difference is effectively zero:
+
+```text
+-0.000022
+```
+
+This indicates that the Improved U-Net should not be interpreted as uniformly superior.
+
+Instead, the architectural modification changes the distribution of successful and unsuccessful difficult cases.
+
+The results therefore support the use of multiple evaluation strategies:
+
+- aggregate Dice,
+- class-level Dice,
+- IoU,
+- paired slice-level comparison,
+- qualitative visual analysis,
+- computational efficiency metrics.
 
 ---
 
-## Engineering Recommendation
+## Conclusion
 
-TODO: update this section using the final HipMRI results.
+This project compared a standard 2D U-Net with an Improved U-Net for six-class semantic segmentation of HipMRI pelvic MRI slices.
 
-The final recommendation will consider both segmentation quality and computational cost.
-
-A possible decision rule is:
+Both models achieved strong overall segmentation performance:
 
 ```text
-Use the Improved U-Net only if it provides a meaningful and consistent
-improvement in prostate boundary segmentation relative to the standard U-Net.
+Baseline mean test Dice:  0.9351
+Improved mean test Dice:  0.9366
 ```
 
-If the improvement is only marginal while computation increases substantially, the standard U-Net may be preferable for a fast annotation-assistance workflow.
+The Improved U-Net achieved the higher aggregate score, but the gain was small.
 
-If the Improved U-Net produces a meaningful improvement on difficult prostate slices without excessive additional cost, it may be preferred as the research model.
+The paired test-slice analysis showed:
 
-However, even if the target Dice threshold is achieved, difficult or low-confidence cases should still be routed to a human specialist rather than accepted automatically.
+```text
+Improved better: 222 slices
+Improved worse:  318 slices
+Average foreground Dice difference: -0.000022
+```
 
-This is especially important for base and apex slices, where a global segmentation score may conceal significant local contour errors.
+The Improved U-Net also required approximately:
+
+```text
+4.5% more trainable parameters
+18.3% longer inference time
+20.8% more peak GPU memory
+```
+
+Therefore, the experimental evidence does not show a strong overall efficiency advantage for the Improved U-Net.
+
+Its main benefit appears to be improved performance on some difficult cases and one of the smaller segmentation classes rather than a consistent improvement across the entire dataset.
+
+This result highlights the importance of evaluating medical image segmentation systems using both aggregate metrics and paired qualitative failure analysis instead of relying on a single global Dice score.
 
 ---
 
-## Project Structure
+## Running the Dataset Inspection
 
-```text
-Improved_UNet_XuanyuLi/
-│
-├── modules.py
-├── dataset.py
-├── train.py
-├── predict.py
-├── compare_models.py
-├── README.md
-│
-└── result figures
+```bash
+python dataset.py
 ```
 
-### `modules.py`
-
-Contains:
+Example output:
 
 ```text
-BasicUNet
-ImprovedUNet
-supporting convolution and residual modules
-```
-
-### `dataset.py`
-
-Responsible for:
-
-```text
-loading NIfTI MRI files
-loading segmentation masks
-pairing case and segmentation files
-normalising MRI intensity
-creating train/validation/test DataLoaders
-preserving the official patient-independent split
-```
-
-### `train.py`
-
-Responsible for:
-
-```text
-training
-validation
-loss computation
-Dice
-IoU
-checkpointing
-runtime profiling
-```
-
-### `predict.py`
-
-Responsible for:
-
-```text
-loading a saved checkpoint
-test inference
-qualitative segmentation visualisation
-error-map generation
-failure-case extraction
-```
-
-### `compare_models.py`
-
-Responsible for:
-
-```text
-paired Basic U-Net versus Improved U-Net comparison
-per-slice Dice comparison
-identifying improvement cases
-identifying degradation cases
+Images: torch.Size([8, 1, 256, 128])
+Masks: torch.Size([8, 256, 128])
+Mask labels: tensor([0, 1, 2, 3, 4, 5])
 ```
 
 ---
 
-## Usage
-
-### Dataset
-
-The HipMRI dataset is not included in this repository.
-
-On Rangpur, the expected dataset root is:
-
-```text
-/home/groups/comp3710/HipMRI_Study_open/keras_slices_data
-```
-
-### Training the Baseline
-
-Example:
+## Training the Baseline
 
 ```bash
 python train.py \
-    --data-root /home/groups/comp3710/HipMRI_Study_open/keras_slices_data \
-    --model baseline \
-    --epochs TODO \
-    --batch-size TODO
+  --data-root /home/groups/comp3710/HipMRI_Study_open/keras_slices_data \
+  --model baseline \
+  --epochs 30 \
+  --batch-size 8 \
+  --num-workers 2
 ```
 
-### Training the Improved U-Net
+---
+
+## Training the Improved U-Net
 
 ```bash
 python train.py \
-    --data-root /home/groups/comp3710/HipMRI_Study_open/keras_slices_data \
-    --model improved \
-    --epochs TODO \
-    --batch-size TODO
+  --data-root /home/groups/comp3710/HipMRI_Study_open/keras_slices_data \
+  --model improved \
+  --epochs 30 \
+  --batch-size 8 \
+  --num-workers 2
 ```
 
-### Inference
+---
 
-```bash
-python predict.py \
-    --data-root /home/groups/comp3710/HipMRI_Study_open/keras_slices_data \
-    --checkpoint best_improved_unet.pth \
-    --model improved
-```
-
-### Paired Model Comparison
+## Comparing the Models
 
 ```bash
 python compare_models.py \
-    --data-root /home/groups/comp3710/HipMRI_Study_open/keras_slices_data \
-    --baseline-checkpoint best_baseline_unet.pth \
-    --improved-checkpoint best_improved_unet.pth
+  --data-root /home/groups/comp3710/HipMRI_Study_open/keras_slices_data \
+  --baseline-checkpoint best_baseline_unet.pth \
+  --improved-checkpoint best_improved_unet.pth \
+  --num-cases 5
 ```
+
+This produces paired examples showing slices where the Improved U-Net performs substantially better or worse than the baseline.
 
 ---
 
-## Dependencies
+## Reproducibility Notes
 
-The project requires:
+The following steps are important for reproducing the results:
 
-```text
-Python
-PyTorch
-torchvision
-NumPy
-nibabel
-matplotlib
-```
-
-TODO before submission:
-
-Run:
-
-```bash
-python -c "
-import sys
-import torch
-import torchvision
-import numpy
-import nibabel
-import matplotlib
-
-print('Python:', sys.version)
-print('PyTorch:', torch.__version__)
-print('torchvision:', torchvision.__version__)
-print('NumPy:', numpy.__version__)
-print('nibabel:', nibabel.__version__)
-print('matplotlib:', matplotlib.__version__)
-"
-```
-
-Then replace this section with the exact versions used for the final experiment.
-
----
-
-## Reproducibility
-
-The following steps are used to improve reproducibility:
-
-- fixed patient-independent train/validation/test split;
-- identical preprocessing for the baseline and proposed model;
-- identical evaluation split;
-- explicit model checkpoints;
-- reported software versions;
-- documented training settings;
-- deterministic random seed where applicable.
-
-The dataset and trained `.pth` checkpoints are intentionally not committed to the Git repository.
-
----
-
-## Data Leakage Verification
-
-The following patient-level check was performed directly on the Rangpur dataset:
-
-```text
-Train/Val overlap: set()
-Train/Test overlap: set()
-Val/Test overlap: set()
-```
-
-This confirms that no patient occurs in more than one dataset partition.
-
-This is especially important because HipMRI contains multiple slices and treatment weeks for individual patients.
+1. Use the official HipMRI train, validation, and test folders.
+2. Preserve the supplied patient-level split.
+3. Standardise all image and mask sizes to `256 × 128`.
+4. Use bilinear interpolation for MRI images.
+5. Use nearest-neighbour interpolation for segmentation masks.
+6. Use six output classes.
+7. Use z-score intensity normalisation.
+8. Train and evaluate the baseline and Improved U-Net under the same experimental conditions.
+9. Evaluate both aggregate and slice-level performance.
+10. Use the saved best validation checkpoint for final test evaluation.
 
 ---
 
 ## Limitations
 
-The current project uses a 2D slice-wise approach.
+### 1. Organ-to-label mapping
 
-This provides lower memory usage and simpler training compared with a full 3D model, but it does not explicitly model continuity between adjacent slices.
+An authoritative organ-to-label mapping was not located in the distributed dataset files inspected on Rangpur.
 
-As a result, possible limitations include:
+Therefore, this report uses numeric class identifiers instead of assigning anatomical names without verification.
 
-- inconsistent contours between neighbouring slices;
-- reduced context at the prostate base and apex;
-- sensitivity to small foreground structures;
-- class imbalance;
-- errors near low-contrast anatomical boundaries.
+### 2. 2D segmentation
 
-A future extension could investigate a 3D U-Net or other spatial-context model.
+The models operate on individual 2D MRI slices.
 
----
+They do not explicitly use information from neighbouring slices or full 3D anatomical context.
 
-## Artificial Intelligence Usage Disclosure
+A 3D segmentation architecture could potentially improve consistency across slices.
 
-OpenAI ChatGPT was used as an engineering and learning assistant during this project.
+### 3. Class imbalance
 
-AI assistance was used for:
+Labels 4 and 5 occur much less frequently than the dominant classes.
 
-- discussing U-Net and residual architecture concepts;
-- explaining PyTorch segmentation operations;
-- scaffolding portions of the implementation;
-- debugging data-loading and command-line issues;
-- designing evaluation procedures;
-- developing paired baseline comparison logic;
-- suggesting failure-case analysis procedures;
-- reviewing the structure and wording of project documentation.
+This may reduce the reliability of predictions for the small structures.
 
-All AI-assisted content was manually inspected and empirically tested.
+Possible future improvements include:
 
-Verification included:
+- class-weighted loss,
+- focal loss,
+- class-balanced sampling,
+- targeted data augmentation,
+- boundary-aware loss,
+- 3D contextual modelling.
 
-- checking MRI and segmentation tensor shapes;
-- inspecting segmentation label values;
-- verifying MRI-mask file pairing;
-- checking the complete training label set;
-- verifying patient-level train/validation/test separation;
-- running baseline and Improved U-Net models;
-- comparing models on identical evaluation data;
-- visualising predictions and segmentation errors;
-- checking reported metrics against program output.
+### 4. Limited architectural search
 
-The author remains responsible for all implementation decisions, experiments, reported values, interpretations, and conclusions.
+Only one baseline architecture and one Improved U-Net architecture were compared.
+
+A broader hyperparameter or architecture search could provide stronger conclusions.
 
 ---
 
-## References
-
-1. COMP3710 Pattern Recognition and Analysis, 2026 Project Specification.
-2. Ronneberger, O., Fischer, P., and Brox, T.  
-   U-Net: Convolutional Networks for Biomedical Image Segmentation.
-3. HipMRI Study dataset supplied through the COMP3710 Rangpur HPC environment.
-4. Additional references for the Improved U-Net architecture will be added according to the final implementation.
-
----
-
-## Current Project Status
-
-Completed:
+## Final Result Summary
 
 ```text
-✓ GitHub project and topic-recognition branch
-✓ Basic U-Net implementation
-✓ Improved U-Net implementation
-✓ Training pipeline
-✓ Validation pipeline
-✓ Dice and IoU evaluation code
-✓ Inference visualisation
-✓ Failure-case extraction
-✓ Paired model comparison
-✓ Rangpur access
-✓ HipMRI data discovery
-✓ NIfTI loading
-✓ MRI-mask pairing
-✓ Six-class mask verification
-✓ Patient-level leakage verification
-✓ Label-distribution analysis
+Baseline U-Net
+--------------
+Mean Test Dice:          0.9351
+Parameters:              7,762,630
+Inference Time:          0.744 ms/image
+Peak GPU Memory:         822.41 MB
+
+
+Improved U-Net
+--------------
+Mean Test Dice:          0.9366
+Parameters:              8,113,766
+Inference Time:          0.880 ms/image
+Peak GPU Memory:         993.50 MB
+
+
+Paired Comparison
+-----------------
+Test slices:             540
+Improved better:         222
+Improved worse:          318
+Average Dice difference: -0.000022
 ```
 
-Remaining:
-
-```text
-□ Verify the numeric prostate label
-□ Update dataset.py for HipMRI NIfTI input
-□ Confirm six-class model output
-□ Run HipMRI Basic U-Net baseline
-□ Run HipMRI Improved U-Net
-□ Achieve prostate Dice >= 0.75
-□ Profile Rangpur GPU VRAM
-□ Generate final HipMRI figures
-□ Perform HipMRI failure-case analysis
-□ Fill all TODO result tables
-□ Add exact dependency versions
-□ Push final commits
-□ Open upstream pull request
-□ Export README to PDF
-□ Submit PDF to Turnitin
-```
+Overall, the Improved U-Net achieved a marginally higher aggregate Dice score but did not provide a consistent per-slice advantage over the baseline.

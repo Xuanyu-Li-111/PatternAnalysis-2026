@@ -7,7 +7,7 @@ from dataset import create_dataloaders
 from modules import BasicUNet, ImprovedUNet
 
 
-NUM_CLASSES = 4
+NUM_CLASSES = 6
 
 
 def load_model(

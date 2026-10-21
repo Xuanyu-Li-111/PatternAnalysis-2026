@@ -1,0 +1,14 @@
+*.pth
+*.bak
+*.out
+*.err
+__pycache__/
+*.pyc
+
+.idea/
+__pycache__/
+*.pyc
+*.pth
+*.bak
+*.out
+*.err
